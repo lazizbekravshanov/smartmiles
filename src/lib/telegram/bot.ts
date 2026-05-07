@@ -10,6 +10,7 @@ import { handleHelp } from "@/lib/telegram/handlers/help";
 import { handleRoute } from "@/lib/telegram/handlers/route";
 import { handleFuel } from "@/lib/telegram/handlers/fuel";
 import { handleStops } from "@/lib/telegram/handlers/stops";
+import { handleToll } from "@/lib/telegram/handlers/toll";
 
 let cached: Bot<SessionContext> | null = null;
 
@@ -25,6 +26,7 @@ export function getBot(): Bot<SessionContext> {
   bot.command("route", handleRoute);
   bot.command("fuel", handleFuel);
   bot.command("stops", handleStops);
+  bot.command("toll", handleToll);
 
   // Anything else → short hint, no LLM.
   bot.on("message:text", async (ctx) => {
@@ -44,7 +46,8 @@ export async function registerCommands(): Promise<void> {
   const bot = getBot();
   await bot.api.setMyCommands([
     { command: "start", description: "Welcome + features" },
-    { command: "route", description: "Distance + ETA + fuel + tolls" },
+    { command: "route", description: "Distance + ETA + fuel + tolls + toll-free alt" },
+    { command: "toll", description: "Exact toll lookup by authority + endpoints" },
     { command: "fuel", description: "Cheapest truck stops along the corridor" },
     { command: "stops", description: "Weigh stations + rest areas" },
     { command: "help", description: "Full command reference" },

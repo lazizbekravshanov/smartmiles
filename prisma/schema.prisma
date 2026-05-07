@@ -60,3 +60,73 @@ model ApiCache {
 
   @@index([cacheKey, expiresAt])
 }
+
+model TollAuthority {
+  id              String        @id
+  name            String
+  state           String
+  highways        String[]
+  rateScheduleUrl String
+  transponders    String[]
+  prepassAccepted Boolean       @default(false)
+  tollFree        Boolean       @default(false)
+  lastScrapedAt   DateTime?
+  segments        TollSegment[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([state])
+}
+
+model TollSegment {
+  id              String        @id @default(cuid())
+  authorityId     String
+  authority       TollAuthority @relation(fields: [authorityId], references: [id])
+  highway         String
+  direction       String
+  entryMileMarker Float?
+  exitMileMarker  Float?
+  entryPointName  String
+  exitPointName   String
+  entryLat        Float?
+  entryLng        Float?
+  exitLat         Float?
+  exitLng         Float?
+  prepassBypass   Boolean       @default(false)
+  rates           TollRate[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([authorityId, highway, direction, entryPointName, exitPointName])
+  @@index([highway, direction])
+  @@index([authorityId])
+}
+
+model TollRate {
+  id               String      @id @default(cuid())
+  segmentId        String
+  segment          TollSegment @relation(fields: [segmentId], references: [id])
+  vehicleClass     String
+  axleCount        Int
+  paymentMethod    String
+  rateCents        Int
+  ratePerMileCents Int?
+  effectiveDate    DateTime
+  sourceUrl        String
+  createdAt        DateTime    @default(now())
+
+  @@unique([segmentId, vehicleClass, paymentMethod, effectiveDate])
+  @@index([segmentId, vehicleClass, paymentMethod])
+}
+
+model TollQueryCache {
+  id         String   @id @default(cuid())
+  routeKey   String   @unique
+  totalCents Int
+  breakdown  Json
+  confidence String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([routeKey, expiresAt])
+}

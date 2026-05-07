@@ -32,12 +32,18 @@ function bboxFor(coords: Array<[number, number]>): [number, number, number, numb
   return [minLng, minLat, maxLng, maxLat];
 }
 
-export async function getRoute(origin: LatLng, destination: LatLng): Promise<RouteResult> {
+export interface OsrmOptions {
+  /** Excludes toll-tagged ways from the route. OSRM demo's car profile honors `exclude=toll`. */
+  excludeTolls?: boolean;
+}
+
+export async function getRoute(origin: LatLng, destination: LatLng, opts: OsrmOptions = {}): Promise<RouteResult> {
   const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
   const u = new URL(`${env().OSRM_BASE_URL}/route/v1/driving/${coords}`);
   u.searchParams.set("overview", "full");
   u.searchParams.set("geometries", "geojson");
   u.searchParams.set("annotations", "false");
+  if (opts.excludeTolls) u.searchParams.set("exclude", "toll");
   let res: Response;
   try {
     res = await fetchWithTimeout(u.toString(), { headers: { Accept: "application/json" } });

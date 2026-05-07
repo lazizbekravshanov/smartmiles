@@ -1,0 +1,9 @@
+{
+  "_note": "FHWA's 'Toll Facilities in the United States' dataset (Socrata id tfnc-995b) is published as an href link, not a queryable Socrata table. The actual report lives at fhwa.dot.gov/policyinformation/tollpage/page00.cfm and requires HTML scraping per state. We didn't ingest it because the toll-authority registry already covers every state with truck tolls and rates come from each authority's own page.",
+  "currentReportUrl": "https://www.fhwa.dot.gov/policyinformation/tollpage/page00.cfm",
+  "archiveUrl": "https://www.fhwa.dot.gov/policyinformation/hsspubsarc.cfm#toll",
+  "publisher": "Federal Highway Administration",
+  "datasetId": "tfnc-995b",
+  "license": "http://www.usa.gov/publicdomain/label/1.0/",
+  "facilities": []
+}

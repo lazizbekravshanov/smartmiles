@@ -30,7 +30,8 @@ async function main(): Promise<void> {
   await bot.api.setWebhook(url, { drop_pending_updates: true });
   await bot.api.setMyCommands([
     { command: "start", description: "Welcome + features" },
-    { command: "route", description: "Distance + ETA + fuel + tolls" },
+    { command: "route", description: "Distance + ETA + fuel + tolls + toll-free alt" },
+    { command: "toll", description: "Exact toll lookup by authority + endpoints" },
     { command: "fuel", description: "Cheapest truck stops along the corridor" },
     { command: "stops", description: "Weigh stations + rest areas" },
     { command: "help", description: "Full command reference" },

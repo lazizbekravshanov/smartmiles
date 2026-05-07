@@ -1,26 +1,16 @@
-// /route — point-to-point truck routing. Geocode → routing fallback chain → fuel cost → toll cost (TollGuru) →
-// formatted Markdown reply. No LLM. Tolls degrade silently when TOLLGURU_API_KEY is missing.
+// /route — point-to-point truck routing. Geocode → routing fallback chain → fuel cost → toll cost
+// (DB-first via TollEstimator) → toll-free alternate via OSRM exclude=toll → reply.
 
 import { prisma } from "@/lib/db";
 import { geocode } from "@/lib/routing/nominatim";
 import { getRoute } from "@/lib/routing/router";
-import { estimateTolls } from "@/lib/routing/tolls";
+import { estimateToll } from "@/lib/toll/estimator";
 import { estimateFuel } from "@/lib/utils/fuel";
-import {
-  formatETA,
-  formatGallons,
-  formatMiles,
-  formatPricePerGallon,
-  formatUSD,
-} from "@/lib/utils/format";
+import { formatETA, formatGallons, formatMiles, formatPricePerGallon, formatUSD } from "@/lib/utils/format";
 import { truncateAtWordBoundary } from "@/lib/utils/telegram";
 import { RoutingError } from "@/lib/types";
 import type { SessionContext } from "@/lib/telegram/middleware/session";
 
-/**
- * Parse "/route Chicago IL to Columbus OH" or "/route Chicago IL Columbus OH".
- * Returns null if we can't extract two endpoints.
- */
 export function parseRouteArgs(raw: string): { origin: string; destination: string } | null {
   const arg = raw.replace(/^\/(route|fuel|stops)(@\S+)?\s*/i, "").trim();
   if (!arg) return null;
@@ -36,6 +26,8 @@ export function parseRouteArgs(raw: string): { origin: string; destination: stri
   if (!origin || !destination) return null;
   return { origin, destination };
 }
+
+const NJ_FLAG = "⚠️ _NJ Turnpike has the highest 5-axle per-mile rate in the US — check /toll for the exact peak/off-peak split._";
 
 export async function handleRoute(ctx: SessionContext): Promise<void> {
   const text = ctx.message?.text ?? "";
@@ -54,12 +46,13 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     return;
   }
 
+  // Primary route + toll-free alt in parallel. Either may fail independently — alt is decoration.
+  const o = { lat: originGeo.lat, lng: originGeo.lng };
+  const d = { lat: destGeo.lat, lng: destGeo.lng };
+
   let route;
   try {
-    route = await getRoute(
-      { lat: originGeo.lat, lng: originGeo.lng },
-      { lat: destGeo.lat, lng: destGeo.lng },
-    );
+    route = await getRoute(o, d);
   } catch (err) {
     if (err instanceof RoutingError) {
       await ctx.reply("All routing providers are unavailable right now. Try again in a few minutes.");
@@ -67,6 +60,7 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     }
     throw err;
   }
+  const altRoutePromise = getRoute(o, d, { excludeTolls: true }).catch(() => null);
 
   const corridorStates = [originGeo.region, destGeo.region].filter((s): s is string => !!s);
   const fuel = estimateFuel({
@@ -75,7 +69,19 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     corridorStates,
   });
 
-  const tolls = await estimateTolls(route.bbox, route.geometry, ctx.user.truckClass);
+  const tolls = await estimateToll({
+    routeBbox: route.bbox,
+    routePolyline: route.geometry,
+    states: corridorStates,
+    truckClass: ctx.user.truckClass,
+    paymentMethod: "ezpass",
+    prepassEnrolled: false,
+  });
+
+  const altRoute = await altRoutePromise;
+  const altFuel = altRoute
+    ? estimateFuel({ miles: altRoute.miles, truckClass: ctx.user.truckClass, corridorStates })
+    : null;
 
   await prisma.routeQuery
     .create({
@@ -90,7 +96,7 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
         mileage: route.miles,
         etaMinutes: Math.round(route.durationMinutes),
         fuelEstimate: fuel.totalUsd,
-        tollCost: tolls.totalEstimatedUsd > 0 ? tolls.totalEstimatedUsd : undefined,
+        tollCost: tolls.totalCents > 0 ? tolls.totalCents / 100 : undefined,
         apiUsed: route.provider,
       },
     })
@@ -99,31 +105,67 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
   const lines: string[] = [];
   lines.push(`🛣 *${parsed.origin} → ${parsed.destination}*`);
   lines.push("");
-  lines.push(`📏 Distance: ${formatMiles(route.miles)}`);
-  lines.push(`⏱ ETA: ${formatETA(route.durationMinutes)} (no stops)`);
-  lines.push(`⛽ Fuel est: ~${formatUSD(fuel.totalUsd)} (${formatGallons(fuel.gallons)} @ ${formatPricePerGallon(fuel.pricePerGallon)} avg)`);
+  lines.push(`📐 Distance: ${formatMiles(route.miles)}  |  ⏱ ETA: ${formatETA(route.durationMinutes)}`);
+  lines.push("");
+  lines.push(`💰 *Full Trip Cost:*`);
+  lines.push(`⛽ Fuel:   ~${formatUSD(fuel.totalUsd)}  (${formatGallons(fuel.gallons)} @ ${formatPricePerGallon(fuel.pricePerGallon)} avg)`);
 
-  if (tolls.totalSegmentCount === 0) {
-    lines.push(`💰 Tolls: none on route`);
+  if (tolls.totalCents === 0 && tolls.breakdown.length === 0) {
+    lines.push(`🛣 Tolls:  $0  (no tolls on route)`);
   } else {
-    const named = tolls.segments.filter((s) => s.estimatedUsd !== null).slice(0, 4);
-    if (named.length > 0) {
-      lines.push(`💰 Tolls: ~${formatUSD(tolls.totalEstimatedUsd)} _(≈ ${ctx.user.truckClass.toLowerCase()} E-ZPass est)_`);
-      for (const s of named) {
-        lines.push(`   • ${s.name}: ~${formatUSD(s.estimatedUsd ?? 0)} (${formatMiles(s.miles)})`);
-      }
-      if (tolls.uncalculatedCount > 0) {
-        lines.push(`   • +${tolls.uncalculatedCount} other toll segment${tolls.uncalculatedCount === 1 ? "" : "s"} (cost not in table)`);
-      }
-    } else {
-      lines.push(`💰 Tolls: ${tolls.totalSegmentCount} toll segment${tolls.totalSegmentCount === 1 ? "" : "s"} on route _(cost data unavailable)_`);
+    const conf = tolls.confidence === "high" ? "" : ` _(${tolls.confidence}-conf)_`;
+    lines.push(`🛣 Tolls:  ${tolls.totalFormatted}  (E-ZPass, ${ctx.user.truckClass.toLowerCase()})${conf}`);
+    for (const hit of tolls.breakdown.slice(0, 5)) {
+      const flag = hit.confidence === "estimated" ? " _(est)_" : "";
+      lines.push(`   • ${hit.authorityName}: ${formatUSD(hit.rateCents / 100)}${flag}`);
+    }
+    if (tolls.unmatchedTollRoads.length > 0) {
+      lines.push(`   • +${tolls.unmatchedTollRoads.length} other toll segment${tolls.unmatchedTollRoads.length === 1 ? "" : "s"} (no rate data)`);
     }
   }
 
-  const total = fuel.totalUsd + tolls.totalEstimatedUsd;
-  lines.push(`🧾 Trip cost est: ~${formatUSD(total)}`);
+  const tollDollars = tolls.totalCents / 100;
+  const total = fuel.totalUsd + tollDollars;
+  lines.push(`💵 Total:  ~${formatUSD(total)}`);
+
+  if (altRoute && altFuel && tolls.totalCents > 0) {
+    const altDeltaMiles = altRoute.miles - route.miles;
+    const altDeltaMinutes = altRoute.durationMinutes - route.durationMinutes;
+    const altDeltaFuel = altFuel.totalUsd - fuel.totalUsd;
+    const tollFreeNet = tollDollars - altDeltaFuel;
+    lines.push("");
+    lines.push(`🔄 *Toll-free alt:*`);
+    lines.push(`+${formatMiles(Math.max(0, altDeltaMiles))}  |  +${formatETA(Math.max(0, altDeltaMinutes))}  |  $0 tolls`);
+    lines.push(`Extra fuel: +${formatUSD(Math.max(0, altDeltaFuel))}  |  Net savings: ${formatUSD(tollFreeNet)}`);
+    if (tollFreeNet > 5) {
+      lines.push(`→ Toll-free saves you ~${formatUSD(tollFreeNet)} on this run.`);
+    } else if (tollFreeNet < -5) {
+      lines.push(`→ Toll route is cheaper by ~${formatUSD(-tollFreeNet)} after extra fuel.`);
+    }
+  }
+
+  if (tolls.prepassBypassCount > 0) {
+    lines.push("");
+    lines.push(`⚡ PrePass: ${tolls.prepassBypassCount} weigh-station bypass${tolls.prepassBypassCount === 1 ? "" : "es"} possible on this route`);
+  }
+
+  if (corridorStates.includes("NJ") && tolls.totalCents > 0) {
+    lines.push("");
+    lines.push(NJ_FLAG);
+  }
+
+  if (tolls.breakdown.length > 0) {
+    const sources = Array.from(
+      new Set(tolls.breakdown.map((b) => b.sourceUrl).filter((u) => u.length > 0)),
+    ).slice(0, 3);
+    if (sources.length > 0) {
+      lines.push("");
+      lines.push(`Rates: ${sources.map((u) => u.replace(/^https?:\/\/(www\.)?/, "")).join(" · ")}`);
+    }
+  }
+
   lines.push("");
-  lines.push(`API: ${route.provider} · /fuel for cheapest stops`);
+  lines.push(`API: ${route.provider} · /toll for exact lookups · /fuel for cheapest stops`);
 
   const reply = truncateAtWordBoundary(lines.join("\n"));
   await ctx.reply(reply, { parse_mode: "Markdown" });
