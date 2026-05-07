@@ -96,24 +96,24 @@ export async function estimateToll(input: TollEstimateInput): Promise<TollEstima
   const unmatched: MatchedTollRoad[] = [];
   let exactCoveredMiles = 0;
 
-  for (const road of matched) {
-    let hit: TollSegmentHit | null = null;
-
-    // Try DB lookup: find authorities whose name matches the OSM road name and pull a rate.
-    const authorities = await prisma.tollAuthority.findMany({
-      where: { tollFree: false },
-      include: {
-        segments: {
-          include: {
-            rates: {
-              where: { vehicleClass, paymentMethod: input.paymentMethod },
-              orderBy: { effectiveDate: "desc" },
-              take: 1,
-            },
+  // PREFETCH ONCE — avoid N+1. Was inside the for-loop and made a 1300mi route 60s+ slower.
+  const authorities = await prisma.tollAuthority.findMany({
+    where: { tollFree: false },
+    include: {
+      segments: {
+        include: {
+          rates: {
+            where: { vehicleClass, paymentMethod: input.paymentMethod },
+            orderBy: { effectiveDate: "desc" },
+            take: 1,
           },
         },
       },
-    });
+    },
+  });
+
+  for (const road of matched) {
+    let hit: TollSegmentHit | null = null;
 
     const matchingAuth = authorities.find((a) => authorityMatchesName(a.name, road.name));
     if (matchingAuth) {

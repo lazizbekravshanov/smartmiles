@@ -18,6 +18,20 @@ export interface MatchedTollRoad {
 }
 
 const ON_ROUTE_THRESHOLD_MI = 0.6;
+/** Polyline subsample stride. Long routes (~1000 mi) have ~5000 polyline points; checking every point
+ *  per toll-way endpoint is O(N×M) and dominates handler latency. Sampling every Nth keeps accuracy
+ *  while reducing haversine calls ~10×. With 0.6 mi proximity threshold and US highway spacing, this
+ *  is plenty accurate. */
+const POLYLINE_STRIDE = 10;
+
+function buildSampledPolyline(polyline: Array<[number, number]>): Array<[number, number]> {
+  if (polyline.length <= 200) return polyline;
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < polyline.length; i += POLYLINE_STRIDE) out.push(polyline[i]!);
+  // Always include the last point so we don't miss the destination tail.
+  if (out[out.length - 1] !== polyline[polyline.length - 1]) out.push(polyline[polyline.length - 1]!);
+  return out;
+}
 
 function pointOnRoute(point: { lat: number; lng: number }, polyline: Array<[number, number]>): boolean {
   for (const [lng, lat] of polyline) {
@@ -26,14 +40,14 @@ function pointOnRoute(point: { lat: number; lng: number }, polyline: Array<[numb
   return false;
 }
 
-function milesOnRoute(way: TollWay, polyline: Array<[number, number]>): number {
+function milesOnRoute(way: TollWay, sampledPolyline: Array<[number, number]>): number {
   if (way.geometry.length < 2) return 0;
   let total = 0;
   for (let i = 1; i < way.geometry.length; i++) {
     const a = way.geometry[i - 1]!;
     const b = way.geometry[i]!;
     const segMiles = haversineMiles({ lat: a.lat, lng: a.lon }, { lat: b.lat, lng: b.lon });
-    if (pointOnRoute({ lat: a.lat, lng: a.lon }, polyline) || pointOnRoute({ lat: b.lat, lng: b.lon }, polyline)) {
+    if (pointOnRoute({ lat: a.lat, lng: a.lon }, sampledPolyline) || pointOnRoute({ lat: b.lat, lng: b.lon }, sampledPolyline)) {
       total += segMiles;
     }
   }
@@ -47,9 +61,10 @@ export async function matchTollRoads(routeBbox: Bbox, polyline: Array<[number, n
   } catch {
     return [];
   }
+  const sampled = buildSampledPolyline(polyline);
   const aggregates = new Map<string, MatchedTollRoad>();
   for (const way of ways) {
-    const miles = milesOnRoute(way, polyline);
+    const miles = milesOnRoute(way, sampled);
     if (miles < 0.5) continue;
     const name = way.name ?? way.ref ?? "Unnamed toll road";
     const prev = aggregates.get(name);
