@@ -8,7 +8,7 @@ One-page system design. Read this before changing anything in `src/lib/routing/`
 - **Telegram framework:** [grammy](https://grammy.dev) — webhook-only (Vercel can't long-poll).
 - **Database:** PostgreSQL via Prisma. Schema = `User`, `RouteQuery`, `ApiCache`.
 - **Routing:** OSRM (demo) → Valhalla (FOSSGIS demo) → OpenRouteService (free tier, `driving-hgv` truck profile).
-- **Tolls:** TollGuru free tier (~1k req/month) — degrades silently when unset.
+- **Tolls:** in-house — Overpass detection + static turnpike rate table (no external paid API).
 - **POI data:** Nominatim (OSM-hosted) for geocoding, Overpass API for fuel stops / rest areas / weigh stations.
 - **No LLM.** SmartMiles is template-driven. The bot doesn't generate freeform text.
 
@@ -54,9 +54,17 @@ Every attempt is appended to `providersTried` and the winning provider is persis
 
 ## Toll cost
 
-`src/lib/routing/tollguru.ts` — POSTs the encoded polyline + truck vehicle type to TollGuru's `/toll/v2/complete-polyline-from-mapping-service` endpoint. Returns `{ totalUsd, segmentCount, source }`. When `TOLLGURU_API_KEY` is empty or the API errors, returns `{ totalUsd: null }` and the route handler omits the toll line cleanly.
+`src/lib/routing/tolls.ts` computes tolls in-house — no paid API:
 
-Truck vehicle-type mapping: `STRAIGHT → 2AxlesTruck`, `SEMI/FLATBED/REEFER/TANKER → 5AxlesTruck`, `LOWBOY → 6AxlesTruck`.
+1. Overpass query for toll-tagged motorway/trunk/primary ways in the route bbox (`queryTollWays` in `overpass.ts`).
+2. For each way, sum the lengths of edges whose endpoints are within ~0.6 mi of the route polyline.
+3. Match the way's `name` against the `TURNPIKE_RATES_5AXLE` table (PA Turnpike, NJ Turnpike, OH Turnpike, NY Thruway, IN Toll Road, IL Tollway, MA Pike, KS/ME/FL/NH/WV/OK turnpikes — ~16 entries).
+4. Multiply by `AXLE_MULTIPLIER[truckClass]` to scale 5-axle rates for STRAIGHT (0.55×), LOWBOY (1.18×), etc.
+5. Toll segments not in the rate table are listed as "+ N other toll segments (cost not in table)" — never invented.
+
+**Refresh:** turnpike rates change annually; update the table from each operator's published 2026 schedule.
+
+**Vercel concern:** Overpass can occasionally hit 429 — the toll section is then omitted entirely (handler returns an empty `TollResult`), the rest of the reply still ships.
 
 ## Caching
 
@@ -65,7 +73,7 @@ Truck vehicle-type mapping: `STRAIGHT → 2AxlesTruck`, `SEMI/FLATBED/REEFER/TAN
 | Tier | Backed by | Lifetime |
 |---|---|---|
 | Hot path | In-memory `Map` (per Lambda instance) | TTL of caller |
-| Durable | Prisma `ApiCache` table | TTL of caller (≥6h for Overpass + TollGuru, 30 days for Nominatim) |
+| Durable | Prisma `ApiCache` table | TTL of caller (≥6h for Overpass, 30 days for Nominatim) |
 
 Redis is not installed — `src/lib/cache/redis.ts` is a no-op shim for a future swap-in if traffic justifies it.
 
@@ -80,7 +88,7 @@ Redis is not installed — `src/lib/cache/redis.ts` is a no-op shim for a future
 
 - `vercel.json` — `maxDuration: 30` on `/api/telegram` (Telegram webhook can wait up to 60s, capped shorter so a stuck call doesn't block the next update).
 - `scripts/set-webhook.ts` — run once after deploy: `tsx scripts/set-webhook.ts https://your-app.vercel.app`.
-- Env vars to set: `TELEGRAM_BOT_TOKEN`, `OPENROUTE_API_KEY` (optional), `TOLLGURU_API_KEY` (optional), `DATABASE_URL`, `NEXT_PUBLIC_APP_URL`.
+- Env vars to set: `TELEGRAM_BOT_TOKEN`, `DATABASE_URL`, `OPENROUTE_API_KEY` (optional), `NEXT_PUBLIC_APP_URL`.
 
 ## Future: self-hosted infra
 

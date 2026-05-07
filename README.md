@@ -39,9 +39,8 @@ Fill in the keys. Only `TELEGRAM_BOT_TOKEN` and `DATABASE_URL` are strictly requ
 | `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) | Required |
 | `DATABASE_URL` | [Neon](https://neon.tech) free 0.5 GB Postgres | Required |
 | `OPENROUTE_API_KEY` | [openrouteservice.org/dev](https://openrouteservice.org/dev/#/signup) | Optional — 3rd-tier routing fallback |
-| `TOLLGURU_API_KEY` | [tollguru.com](https://tollguru.com) | Optional — toll cost in `/route`. Free tier ~1k req/month |
 
-OSRM, Valhalla, Nominatim, and Overpass all use public OSM-hosted demo servers — no keys needed for the MVP.
+OSRM, Valhalla, Nominatim, and Overpass all use public OSM-hosted demo servers — no keys needed for the MVP. Toll costs are computed in-house from OpenStreetMap toll-road tags + a static turnpike rate table — no paid API.
 
 ### 3. Migrate the database
 
@@ -81,7 +80,7 @@ NEXT_PUBLIC_APP_URL=https://your-app.vercel.app npm run set-webhook
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system design and self-hosting roadmap. See [`docs/api-research.md`](docs/api-research.md) for per-API rate limits, costs, and fallbacks.
 
-**TL;DR:** Routing falls through `OSRM → Valhalla → OpenRouteService` — on all-three failure, the user gets a clean error. Geocoding via Nominatim with 30-day per-result caching. POI queries via Overpass (`hgv=yes` fuel stops, weigh stations, rest areas) with 6 h caching. Toll cost via TollGuru on the route polyline (free ~1k/mo). All fair-use compatible for low-volume MVP; self-hosting flagged for when traffic grows.
+**TL;DR:** Routing falls through `OSRM → Valhalla → OpenRouteService` — on all-three failure, the user gets a clean error. Geocoding via Nominatim with 30-day per-result caching. POI queries via Overpass (`hgv=yes` fuel stops, weigh stations, rest areas, `toll=yes` ways) with 6 h caching. Toll cost computed in-house from a static 5-axle E-ZPass rate table (~16 major US turnpikes, refresh annually). All fair-use compatible for low-volume MVP; self-hosting flagged for when traffic grows.
 
 ## License
 

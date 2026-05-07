@@ -20,6 +20,24 @@ const OverpassResponse = z.object({
   elements: z.array(OverpassElement),
 });
 
+const OverpassWayWithGeom = z.object({
+  type: z.literal("way"),
+  id: z.number(),
+  tags: z.record(z.string()).optional(),
+  geometry: z.array(z.object({ lat: z.number(), lon: z.number() })).optional(),
+});
+
+const OverpassWayResponse = z.object({
+  elements: z.array(OverpassWayWithGeom),
+});
+
+export interface TollWay {
+  id: number;
+  name: string | undefined;
+  ref: string | undefined;
+  geometry: Array<{ lat: number; lon: number }>;
+}
+
 export type Bbox = [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
 
 function pad(bbox: Bbox, deltaDeg: number): Bbox {
@@ -98,6 +116,41 @@ out center tags;`;
     name: p.tags["name"],
     direction: p.tags["direction"],
   }));
+}
+
+/**
+ * Toll-tagged highway ways within the corridor. Returns each way with its full geometry so the caller can
+ * compute mileage on-route. Filters to highway=motorway/trunk/primary so we don't pick up tolled side-streets.
+ */
+export async function queryTollWays(routeBbox: Bbox, paddingDeg = 0.2): Promise<TollWay[]> {
+  const bb = bboxClause(pad(routeBbox, paddingDeg));
+  const q = `[out:json][timeout:25];
+(
+  way["highway"~"motorway|trunk|primary"]["toll"="yes"]${bb};
+);
+out tags geom;`;
+  const cacheKey = `overpass:tolls:${q}`;
+  return getCached<TollWay[]>(cacheKey, SIX_HOURS_SEC, async () => {
+    const res = await fetchWithTimeout(env().OVERPASS_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": env().NOMINATIM_USER_AGENT,
+      },
+      body: `data=${encodeURIComponent(q)}`,
+      timeoutMs: 28_000,
+    });
+    if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`);
+    const json: unknown = await res.json();
+    const parsed = OverpassWayResponse.parse(json);
+    return parsed.elements.map((w) => ({
+      id: w.id,
+      name: w.tags?.["name"],
+      ref: w.tags?.["ref"],
+      geometry: w.geometry ?? [],
+    }));
+  });
 }
 
 export async function queryFuelStops(routeBbox: Bbox, paddingDeg = 0.3): Promise<FuelStop[]> {

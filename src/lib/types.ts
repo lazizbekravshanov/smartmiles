@@ -20,13 +20,24 @@ export interface RouteResult {
   provider: RoutingProvider;
 }
 
+export interface TollSegment {
+  /** OSM `name` tag (e.g. "Pennsylvania Turnpike") or "Unnamed toll segment". */
+  name: string;
+  /** Estimated miles spent on this toll road within the route corridor. */
+  miles: number;
+  /** USD cost estimate, or null when this segment is not in the static rate table. */
+  estimatedUsd: number | null;
+}
+
 export interface TollResult {
-  /** USD total toll cost on the route, or null if TollGuru unavailable / no key. */
-  totalUsd: number | null;
-  /** Number of toll segments encountered (0 = no tolls on route). */
-  segmentCount: number;
-  /** Source label for the cost ("tollguru" or "unknown"). */
-  source: string;
+  /** Sum of estimated costs (only counts segments with rate data). */
+  totalEstimatedUsd: number;
+  /** Number of detected toll segments (named or otherwise). */
+  totalSegmentCount: number;
+  /** Number of segments missing from the rate table — disclaimer for the user. */
+  uncalculatedCount: number;
+  /** Per-segment breakdown, sorted by mileage descending. */
+  segments: TollSegment[];
 }
 
 export class RoutingError extends Error {

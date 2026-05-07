@@ -4,7 +4,7 @@
 import { prisma } from "@/lib/db";
 import { geocode } from "@/lib/routing/nominatim";
 import { getRoute } from "@/lib/routing/router";
-import { getTollCost } from "@/lib/routing/tollguru";
+import { estimateTolls } from "@/lib/routing/tolls";
 import { estimateFuel } from "@/lib/utils/fuel";
 import {
   formatETA,
@@ -75,7 +75,7 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     corridorStates,
   });
 
-  const tolls = await getTollCost(route.geometry, ctx.user.truckClass);
+  const tolls = await estimateTolls(route.bbox, route.geometry, ctx.user.truckClass);
 
   await prisma.routeQuery
     .create({
@@ -90,7 +90,7 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
         mileage: route.miles,
         etaMinutes: Math.round(route.durationMinutes),
         fuelEstimate: fuel.totalUsd,
-        tollCost: tolls.totalUsd ?? undefined,
+        tollCost: tolls.totalEstimatedUsd > 0 ? tolls.totalEstimatedUsd : undefined,
         apiUsed: route.provider,
       },
     })
@@ -103,18 +103,25 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
   lines.push(`⏱ ETA: ${formatETA(route.durationMinutes)} (no stops)`);
   lines.push(`⛽ Fuel est: ~${formatUSD(fuel.totalUsd)} (${formatGallons(fuel.gallons)} @ ${formatPricePerGallon(fuel.pricePerGallon)} avg)`);
 
-  if (tolls.totalUsd !== null) {
-    if (tolls.totalUsd > 0) {
-      lines.push(`💰 Tolls: ${formatUSD(tolls.totalUsd)} (${tolls.segmentCount} segment${tolls.segmentCount === 1 ? "" : "s"})`);
+  if (tolls.totalSegmentCount === 0) {
+    lines.push(`💰 Tolls: none on route`);
+  } else {
+    const named = tolls.segments.filter((s) => s.estimatedUsd !== null).slice(0, 4);
+    if (named.length > 0) {
+      lines.push(`💰 Tolls: ~${formatUSD(tolls.totalEstimatedUsd)} _(≈ ${ctx.user.truckClass.toLowerCase()} E-ZPass est)_`);
+      for (const s of named) {
+        lines.push(`   • ${s.name}: ~${formatUSD(s.estimatedUsd ?? 0)} (${formatMiles(s.miles)})`);
+      }
+      if (tolls.uncalculatedCount > 0) {
+        lines.push(`   • +${tolls.uncalculatedCount} other toll segment${tolls.uncalculatedCount === 1 ? "" : "s"} (cost not in table)`);
+      }
     } else {
-      lines.push(`💰 Tolls: $0 (no tolls on route)`);
+      lines.push(`💰 Tolls: ${tolls.totalSegmentCount} toll segment${tolls.totalSegmentCount === 1 ? "" : "s"} on route _(cost data unavailable)_`);
     }
   }
 
-  const total = fuel.totalUsd + (tolls.totalUsd ?? 0);
-  if (tolls.totalUsd !== null) {
-    lines.push(`🧾 Total trip cost: ~${formatUSD(total)}`);
-  }
+  const total = fuel.totalUsd + tolls.totalEstimatedUsd;
+  lines.push(`🧾 Trip cost est: ~${formatUSD(total)}`);
   lines.push("");
   lines.push(`API: ${route.provider} · /fuel for cheapest stops`);
 

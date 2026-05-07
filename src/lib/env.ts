@@ -12,8 +12,6 @@ const envSchema = z.object({
   NOMINATIM_BASE_URL: z.string().url().default("https://nominatim.openstreetmap.org"),
   NOMINATIM_USER_AGENT: z.string().default("SmartMiles/0.1"),
   OVERPASS_BASE_URL: z.string().url().default("https://overpass-api.de/api/interpreter"),
-  TOLLGURU_API_KEY: z.string().optional().default(""),
-  TOLLGURU_BASE_URL: z.string().url().default("https://apis.tollguru.com"),
   REDIS_URL: z.string().optional().default(""),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   NEXT_PUBLIC_APP_URL: z.string().optional().default(""),

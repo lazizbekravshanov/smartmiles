@@ -114,20 +114,18 @@ These can be reintroduced if/when the feature set grows. See git history for the
 
 ---
 
-## TollGuru
+## Toll cost (in-house, no external API)
 
-- **Base URL:** `https://apis.tollguru.com`
-- **Key endpoint:**
-  - `POST /toll/v2/complete-polyline-from-mapping-service` — accepts an encoded polyline + vehicle type, returns toll cost + per-toll breakdown.
-- **Auth:** `x-api-key` header; free key from tollguru.com.
-- **Rate limits:** Free tier ~1,000 req/month. Paid plans for higher volume.
-- **Self-hostable:** No.
-- **Cost:** Free tier sufficient for MVP.
-- **SmartMiles use case:** Toll-cost line in `/route` reply. Truck vehicle types: `2AxlesTruck` (straight), `5AxlesTruck` (semi/flatbed/reefer/tanker), `6AxlesTruck` (lowboy).
-- **Fallback if unavailable:** Omit the toll line. Bot still replies with miles, ETA, and fuel cost.
-- **Implementation notes:**
-  - Cache responses by polyline hash for 6h (`SIX_HOURS_SEC` in `api-cache.ts`).
-  - 5s client timeout. On 4xx/5xx, return `{ totalUsd: null }` rather than throwing.
+We tried TollGuru first. Their free tier supports the consumer web calculator but **not** the API for 5-axle truck routing — that's a paid plan. To keep SmartMiles free, we compute tolls ourselves:
+
+1. **Detection:** Overpass query for `way[highway~"motorway|trunk|primary"][toll=yes]` within the route bbox.
+2. **On-route filtering:** For each toll way, sum the lengths of edges whose endpoints sit within ~0.6 mi of the route polyline. Anything below 0.5 mi total is dropped as noise.
+3. **Pricing:** Static `TURNPIKE_RATES_5AXLE` table in `src/lib/routing/tolls.ts` — ~16 named US turnpikes with per-mile 5-axle E-ZPass rates. Multiplied by an axle-count factor for non-semi truck classes (STRAIGHT 0.55×, LOWBOY 1.18×, etc.).
+4. **Honesty:** Reply is tagged "≈ <truckclass> E-ZPass est". Toll segments not in the rate table (e.g. local toll bridges, dynamic-priced corridors) are listed as "+ N other toll segments (cost not in table)" — no fake numbers.
+
+**Refresh cadence:** annual. Each turnpike publishes 2026 rates on its operator site; we update the table when meaningful changes hit. Out of MVP scope: time-of-day pricing on a few corridors (NJ Turnpike rush hour), congestion-priced city zones (NYC).
+
+**Fallback if Overpass fails:** the toll section is omitted from the reply; the route still shows miles, ETA, and fuel.
 
 ---
 
