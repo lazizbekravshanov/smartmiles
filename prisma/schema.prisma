@@ -1,0 +1,62 @@
+// SmartMiles Prisma schema. Owns User profiles, route history, multi-stop load plans, and a generic API response cache.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TruckClass {
+  STRAIGHT
+  SEMI
+  FLATBED
+  REEFER
+  TANKER
+  LOWBOY
+}
+
+model User {
+  id           String       @id @default(cuid())
+  telegramId   String       @unique
+  username     String?
+  firstName    String?
+  homeState    String?
+  truckClass   TruckClass   @default(SEMI)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  routes       RouteQuery[]
+}
+
+model RouteQuery {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  origin        String
+  destination   String
+  originLat     Float?
+  originLng     Float?
+  destLat       Float?
+  destLng       Float?
+  mileage       Float?
+  etaMinutes    Int?
+  fuelEstimate  Float?
+  tollCost      Float?
+  apiUsed       String?
+  rawResponse   Json?
+  createdAt     DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model ApiCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  value     Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([cacheKey, expiresAt])
+}
