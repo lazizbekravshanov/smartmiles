@@ -78,29 +78,29 @@ export async function handleStops(ctx: SessionContext): Promise<void> {
     .slice(0, 6);
 
   const lines: string[] = [];
-  lines.push(`⚖️ *Stops — ${parsed.origin} → ${parsed.destination}*`);
+  lines.push(`⚖️ *${parsed.origin} → ${parsed.destination}*`);
   lines.push("");
 
-  lines.push("Rest Areas:");
+  lines.push(`🛌 *Rest areas*`);
   if (rankedRest.length === 0) {
-    lines.push("  (none tagged in OSM along this corridor)");
+    lines.push(`   _none tagged in OSM_`);
   } else {
     for (const r of rankedRest) {
       const name = r.poi.tags["name"] ?? "Rest area";
       const dir = r.poi.tags["direction"];
       const dirSuffix = dir ? ` (${dir})` : "";
-      lines.push(`  📍 ~mi ${Math.round(r.mileMarker)} — ${name}${dirSuffix}`);
+      lines.push(`   • mi ${Math.round(r.mileMarker)} — ${name}${dirSuffix}`);
     }
   }
 
   lines.push("");
-  lines.push("Weigh Stations:");
+  lines.push(`⚖️ *Weigh stations*`);
   if (rankedWeigh.length === 0) {
-    lines.push("  (none tagged in OSM along this corridor)");
+    lines.push(`   _none tagged in OSM_`);
   } else {
     for (const r of rankedWeigh) {
       const name = r.poi.tags["name"] ?? "Weigh station";
-      lines.push(`  ⚖️ ~mi ${Math.round(r.mileMarker)} — ${name}`);
+      lines.push(`   • mi ${Math.round(r.mileMarker)} — ${name}`);
     }
   }
 
@@ -109,7 +109,7 @@ export async function handleStops(ctx: SessionContext): Promise<void> {
     .filter((s) => enforcementFor(s) === "high");
   if (dangerStates.length > 0) {
     lines.push("");
-    lines.push(`⚠️ ${dangerStates.join(", ")}: HIGH enforcement density. PrePass recommended.`);
+    lines.push(`⚠️ _${dangerStates.join(", ")} = HIGH enforcement — PrePass recommended._`);
   }
 
   const reply = truncateAtWordBoundary(lines.join("\n"));

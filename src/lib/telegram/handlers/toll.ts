@@ -131,40 +131,46 @@ export async function handleToll(ctx: SessionContext): Promise<void> {
     sourceUrl: r.sourceUrl,
   }));
 
-  const lines: string[] = [];
-  lines.push(`🛣 *${auth.name} — ${seg.entryPointName} → ${seg.exitPointName}*`);
   const dist = seg.entryMileMarker !== null && seg.exitMileMarker !== null
     ? formatMiles(Math.abs((seg.exitMileMarker ?? 0) - (seg.entryMileMarker ?? 0)))
     : null;
-  lines.push(`${seg.highway} · ${seg.direction === "both" ? "both directions" : seg.direction}${dist ? ` · ${dist}` : ""}`);
-  lines.push("");
-  lines.push(`*${ctx.user.truckClass.toLowerCase()} (${vehicleClassFor(ctx.user.truckClass)})*`);
-  lines.push("");
 
   const ezpass = rates.find((r) => r.paymentMethod === "ezpass");
   const cash = rates.find((r) => r.paymentMethod === "cash");
   const tbp = rates.find((r) => r.paymentMethod === "platemail");
+  const shortName = auth.name.replace(/Commission|Authority|Department of Transportation/g, "").trim();
 
-  if (ezpass) lines.push(`💳 E-ZPass:      ${formatUSD(ezpass.rateCents / 100)}`);
-  if (tbp) lines.push(`📧 Toll By Plate: ${formatUSD(tbp.rateCents / 100)}`);
-  if (cash) lines.push(`💵 Cash:          ${formatUSD(cash.rateCents / 100)}`);
-  if (!ezpass && !cash && !tbp) lines.push("(no rates seeded yet for this segment)");
+  const lines: string[] = [];
+  lines.push(`💰 *${shortName}*`);
+  lines.push(`_${seg.entryPointName} → ${seg.exitPointName}_`);
+  lines.push(`${seg.highway} · ${seg.direction === "both" ? "both ways" : seg.direction}${dist ? ` · ${dist}` : ""}`);
+  lines.push("");
+
+  if (ezpass) lines.push(`💳 E-ZPass  *${formatUSD(ezpass.rateCents / 100)}*`);
+  if (tbp) lines.push(`📧 TBP       ${formatUSD(tbp.rateCents / 100)}`);
+  if (cash) lines.push(`💵 Cash      ${formatUSD(cash.rateCents / 100)}`);
+  if (!ezpass && !cash && !tbp) lines.push("_(no rates seeded for this segment yet)_");
 
   if (ezpass && (cash ?? tbp)) {
     const compare = cash ?? tbp!;
     const savings = compare.rateCents - ezpass.rateCents;
     if (savings > 0) {
-      lines.push("");
-      lines.push(`You save ${formatUSD(savings / 100)} per run with E-ZPass.`);
+      lines.push(`   _→ E-ZPass saves ${formatUSD(savings / 100)}_`);
     }
   }
 
-  lines.push("");
-  if (auth.prepassAccepted) lines.push("⚡ PrePass accepted — weigh station bypass eligible");
+  const tags: string[] = [];
+  if (auth.prepassAccepted) tags.push("⚡ PrePass");
   const refRate = ezpass ?? cash ?? tbp;
   if (refRate) {
-    lines.push(`📅 Rates effective: ${refRate.effectiveDate.toISOString().slice(0, 10)}`);
-    lines.push(`🔗 Source: ${refRate.sourceUrl.replace(/^https?:\/\/(www\.)?/, "")}`);
+    tags.push(`📅 ${refRate.effectiveDate.toISOString().slice(0, 10)}`);
+  }
+  if (tags.length > 0) {
+    lines.push("");
+    lines.push(tags.join("  ·  "));
+  }
+  if (refRate) {
+    lines.push(`🔗 _${refRate.sourceUrl.replace(/^https?:\/\/(www\.)?/, "")}_`);
   }
 
   await ctx.reply(truncateAtWordBoundary(lines.join("\n")), { parse_mode: "Markdown" });

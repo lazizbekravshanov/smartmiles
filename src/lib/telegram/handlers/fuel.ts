@@ -6,7 +6,7 @@ import { getRoute } from "@/lib/routing/router";
 import { queryFuelStops } from "@/lib/routing/overpass";
 import { projectOntoPolyline } from "@/lib/utils/geo";
 import { STATE_DIESEL_AVG } from "@/lib/utils/constants";
-import { formatMiles, formatPricePerGallon } from "@/lib/utils/format";
+import { formatPricePerGallon } from "@/lib/utils/format";
 import { truncateAtWordBoundary } from "@/lib/utils/telegram";
 import { parseRouteArgs } from "@/lib/telegram/handlers/route";
 import { RoutingError, type FuelStop } from "@/lib/types";
@@ -73,28 +73,31 @@ export async function handleFuel(ctx: SessionContext): Promise<void> {
   const avgPrice =
     corridorPrices.length > 0 ? corridorPrices.reduce((a, b) => a + b, 0) / corridorPrices.length : null;
 
+  const NUM_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
+
   const lines: string[] = [];
-  lines.push(`⛽ *Fuel Stops — ${parsed.origin} → ${parsed.destination}*`);
+  lines.push(`⛽ *${parsed.origin} → ${parsed.destination}*`);
   lines.push("");
   if (ranked.length === 0) {
-    lines.push("No truck-accessible (hgv=yes) fuel stops tagged in OSM along this corridor.");
-    lines.push("Tip: Pilot/Love's/Flying J locations are usually present at major interstate exits even when not OSM-tagged.");
+    lines.push("_No truck-accessible stops tagged in OSM on this corridor._");
+    lines.push("Pilot / Love's / Flying J are usually at major exits even when OSM doesn't tag them.");
   } else {
     ranked.forEach((r, idx) => {
       const brand = r.stop.brand ?? r.stop.name ?? "Truck stop";
-      const city = r.stop.city ? ` — ${r.stop.city}` : "";
-      lines.push(`${idx + 1}. 📍 ${brand}${city} (~${formatMiles(r.mileMarker)})`);
+      const city = r.stop.city ? ` · ${r.stop.city}` : "";
+      const prefix = NUM_EMOJI[idx] ?? `${idx + 1}.`;
+      lines.push(`${prefix} ${brand}${city} _(mi ${Math.round(r.mileMarker)})_`);
     });
     lines.push("");
     if (avgPrice !== null) {
-      lines.push(`Avg diesel along corridor: ~${formatPricePerGallon(avgPrice)}`);
+      lines.push(`📊 Corridor avg: ${formatPricePerGallon(avgPrice)}`);
     }
     if (corridorStates.length > 1) {
       const cheapest = corridorStates
         .map((s) => ({ s, p: STATE_DIESEL_AVG[s.toUpperCase()] }))
         .filter((x): x is { s: string; p: number } => typeof x.p === "number")
         .sort((a, b) => a.p - b.p)[0];
-      if (cheapest) lines.push(`Tip: fill in ${cheapest.s}, cheapest on this run.`);
+      if (cheapest) lines.push(`💡 _Fuel up in ${cheapest.s} (${formatPricePerGallon(cheapest.p)}) — cheapest on this run._`);
     }
   }
 

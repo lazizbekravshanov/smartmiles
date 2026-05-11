@@ -6,7 +6,7 @@ import { geocode } from "@/lib/routing/nominatim";
 import { getRoute } from "@/lib/routing/router";
 import { estimateToll } from "@/lib/toll/estimator";
 import { estimateFuel } from "@/lib/utils/fuel";
-import { formatETA, formatGallons, formatMiles, formatPricePerGallon, formatUSD } from "@/lib/utils/format";
+import { formatETA, formatMiles, formatUSD } from "@/lib/utils/format";
 import { truncateAtWordBoundary } from "@/lib/utils/telegram";
 import { RoutingError } from "@/lib/types";
 import type { SessionContext } from "@/lib/telegram/middleware/session";
@@ -27,7 +27,7 @@ export function parseRouteArgs(raw: string): { origin: string; destination: stri
   return { origin, destination };
 }
 
-const NJ_FLAG = "⚠️ _NJ Turnpike has the highest 5-axle per-mile rate in the US — check /toll for the exact peak/off-peak split._";
+const NJ_FLAG = "⚠️ _NJ has the highest 5-axle per-mile in the US — /toll NJ Turnpike for split._";
 
 export async function handleRoute(ctx: SessionContext): Promise<void> {
   const text = ctx.message?.text ?? "";
@@ -102,51 +102,50 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     })
     .catch(() => undefined);
 
+  const tollDollars = tolls.totalCents / 100;
+  const total = fuel.totalUsd + tollDollars;
+
   const lines: string[] = [];
   lines.push(`🛣 *${parsed.origin} → ${parsed.destination}*`);
+  lines.push(`${formatMiles(route.miles)} · ${formatETA(route.durationMinutes)}`);
   lines.push("");
-  lines.push(`📐 Distance: ${formatMiles(route.miles)}  |  ⏱ ETA: ${formatETA(route.durationMinutes)}`);
-  lines.push("");
-  lines.push(`💰 *Full Trip Cost:*`);
-  lines.push(`⛽ Fuel:   ~${formatUSD(fuel.totalUsd)}  (${formatGallons(fuel.gallons)} @ ${formatPricePerGallon(fuel.pricePerGallon)} avg)`);
+  lines.push(`⛽ Fuel  ~${formatUSD(fuel.totalUsd)}`);
 
   if (tolls.totalCents === 0 && tolls.breakdown.length === 0) {
-    lines.push(`🛣 Tolls:  $0  (no tolls on route)`);
+    lines.push(`💰 Tolls $0`);
   } else {
-    const conf = tolls.confidence === "high" ? "" : ` _(${tolls.confidence}-conf)_`;
-    lines.push(`🛣 Tolls:  ${tolls.totalFormatted}  (E-ZPass, ${ctx.user.truckClass.toLowerCase()})${conf}`);
+    const confTag = tolls.confidence === "high" ? "" : ` _(${tolls.confidence})_`;
+    lines.push(`💰 Tolls ~${formatUSD(tollDollars)} _E-ZPass_${confTag}`);
     for (const hit of tolls.breakdown.slice(0, 5)) {
-      const flag = hit.confidence === "estimated" ? " _(est)_" : "";
-      lines.push(`   • ${hit.authorityName}: ${formatUSD(hit.rateCents / 100)}${flag}`);
+      const estFlag = hit.confidence === "estimated" ? " _(est)_" : "";
+      lines.push(`   • ${hit.authorityName.replace(/Commission|Authority|Department of Transportation/g, "").trim()} — ${formatUSD(hit.rateCents / 100)}${estFlag}`);
     }
     if (tolls.unmatchedTollRoads.length > 0) {
-      lines.push(`   • +${tolls.unmatchedTollRoads.length} other toll segment${tolls.unmatchedTollRoads.length === 1 ? "" : "s"} (no rate data)`);
+      lines.push(`   • +${tolls.unmatchedTollRoads.length} other segment${tolls.unmatchedTollRoads.length === 1 ? "" : "s"}`);
     }
   }
 
-  const tollDollars = tolls.totalCents / 100;
-  const total = fuel.totalUsd + tollDollars;
-  lines.push(`💵 Total:  ~${formatUSD(total)}`);
+  lines.push(`💵 *Total ~${formatUSD(total)}*`);
 
   if (altRoute && altFuel && tolls.totalCents > 0) {
-    const altDeltaMiles = altRoute.miles - route.miles;
-    const altDeltaMinutes = altRoute.durationMinutes - route.durationMinutes;
-    const altDeltaFuel = altFuel.totalUsd - fuel.totalUsd;
-    const tollFreeNet = tollDollars - altDeltaFuel;
+    const dMiles = Math.max(0, altRoute.miles - route.miles);
+    const dMinutes = Math.max(0, altRoute.durationMinutes - route.durationMinutes);
+    const dFuel = Math.max(0, altFuel.totalUsd - fuel.totalUsd);
+    const net = tollDollars - dFuel;
     lines.push("");
-    lines.push(`🔄 *Toll-free alt:*`);
-    lines.push(`+${formatMiles(Math.max(0, altDeltaMiles))}  |  +${formatETA(Math.max(0, altDeltaMinutes))}  |  $0 tolls`);
-    lines.push(`Extra fuel: +${formatUSD(Math.max(0, altDeltaFuel))}  |  Net savings: ${formatUSD(tollFreeNet)}`);
-    if (tollFreeNet > 5) {
-      lines.push(`→ Toll-free saves you ~${formatUSD(tollFreeNet)} on this run.`);
-    } else if (tollFreeNet < -5) {
-      lines.push(`→ Toll route is cheaper by ~${formatUSD(-tollFreeNet)} after extra fuel.`);
+    lines.push(`🔄 Toll-free: +${formatMiles(dMiles)} · +${formatETA(dMinutes)} · +${formatUSD(dFuel)} fuel`);
+    if (net > 5) {
+      lines.push(`   _→ Saves *${formatUSD(net)}*. Worth it._`);
+    } else if (net < -5) {
+      lines.push(`   _→ Toll route wins by ${formatUSD(-net)}._`);
+    } else {
+      lines.push(`   _→ Roughly a wash._`);
     }
   }
 
   if (tolls.prepassBypassCount > 0) {
     lines.push("");
-    lines.push(`⚡ PrePass: ${tolls.prepassBypassCount} weigh-station bypass${tolls.prepassBypassCount === 1 ? "" : "es"} possible on this route`);
+    lines.push(`⚡ ${tolls.prepassBypassCount} PrePass bypass${tolls.prepassBypassCount === 1 ? "" : "es"} on route`);
   }
 
   if (corridorStates.includes("NJ") && tolls.totalCents > 0) {
@@ -154,18 +153,10 @@ export async function handleRoute(ctx: SessionContext): Promise<void> {
     lines.push(NJ_FLAG);
   }
 
-  if (tolls.breakdown.length > 0) {
-    const sources = Array.from(
-      new Set(tolls.breakdown.map((b) => b.sourceUrl).filter((u) => u.length > 0)),
-    ).slice(0, 3);
-    if (sources.length > 0) {
-      lines.push("");
-      lines.push(`Rates: ${sources.map((u) => u.replace(/^https?:\/\/(www\.)?/, "")).join(" · ")}`);
-    }
+  if (route.provider !== "osrm") {
+    lines.push("");
+    lines.push(`_via ${route.provider}_`);
   }
-
-  lines.push("");
-  lines.push(`API: ${route.provider} · /toll for exact lookups · /fuel for cheapest stops`);
 
   const reply = truncateAtWordBoundary(lines.join("\n"));
   await ctx.reply(reply, { parse_mode: "Markdown" });

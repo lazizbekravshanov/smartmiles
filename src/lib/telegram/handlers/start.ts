@@ -1,21 +1,17 @@
-// /start onboarding. Lean — only mentions the three commands the bot actually supports.
+// /start onboarding — minimalist, one emoji per line.
 
 import type { SessionContext } from "@/lib/telegram/middleware/session";
 
-const START_MESSAGE = `👋 Welcome to SmartMiles.
+const START_MESSAGE = `🛣 *SmartMiles*
+Free routing for owner-ops + small carriers.
 
-Built for owner-ops and small carriers. Free. No signup.
+🚛 /route — miles · time · fuel · tolls
+💰 /toll  — exact rates by turnpike
+⛽ /fuel  — cheap stops on the corridor
+⚖️ /stops — weigh stations + rest areas
 
-What I do:
-/route — distance, ETA, fuel + toll cost + toll-free alt
-/toll  — exact toll lookup by authority + endpoints
-/fuel  — cheapest truck stops along your corridor
-/stops — weigh stations + rest area locations
-
-Example:
-/route Chicago IL to Philadelphia PA
-/toll PA Turnpike Pittsburgh Philadelphia`;
+_Try:_ /route Chicago IL to Columbus OH`;
 
 export async function handleStart(ctx: SessionContext): Promise<void> {
-  await ctx.reply(START_MESSAGE);
+  await ctx.reply(START_MESSAGE, { parse_mode: "Markdown" });
 }
